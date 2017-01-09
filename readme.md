@@ -2,6 +2,8 @@
 
 pycfslib is a python 2.7 library to read, write and create compressed feature set (CFS) file/stream from raw PSG data. The CFS format is used by the Z3Score sleep scoring system (https://z3score.com). Instead of using polysomnography data in European Data Format (EDF, https://en.wikipedia.org/wiki/European_Data_Format), the Z3Score system uses CFS files. CFS files are on an average 17X smaller than corresponding EDF files. This reduces data overhead significantly. The format does not allow any user identifiable information ensuring anonymity. The specifications of the file will be made available very soon. The code is released under GPL v3. For alternative license please contact contact@z3score.com 
 
+(c)-2017 Amiya Patanaik 
+
 ### Installation
 
 ```sh
