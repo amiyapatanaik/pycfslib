@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# modified to be compatible with python 3
 # function to read, write and create CFS stream (byte array) from raw PSG data
 # Patents pending (c)-2016 Amiya Patanaik amiyain@gmail.com
 # Licensed under GPL v3
@@ -115,7 +116,7 @@ def read_stream(stream):
         # read SHA hash
         bytes = stream.read(20)
         digest = struct.unpack('<20B', bytes)
-        urlSafeHash = base64.urlsafe_b64encode("".join(map(chr, digest)))
+        urlSafeHash = base64.urlsafe_b64encode(("".join(map(chr, digest))).encode('UTF-8')).decode('ascii')
         urlSafeHash = urlSafeHash[0:-1]
 
     # read rest of the data
@@ -130,7 +131,7 @@ def read_stream(stream):
         shaHash = hashlib.sha1()
         shaHash.update(bytes)
         rawDigest = shaHash.digest()
-        msgDigest = [ord(c) for c in rawDigest]
+        msgDigest = [c for c in rawDigest]
 
         if (tuple(msgDigest) != digest):
             raise RuntimeError("File is corrupt.")
@@ -170,7 +171,7 @@ def read_header(stream):
         # read SHA hash
         bytes = stream.read(20)
         digest = struct.unpack('<20B', bytes)
-        urlSafeHash = base64.urlsafe_b64encode("".join(map(chr, digest)))
+        urlSafeHash = base64.urlsafe_b64encode(("".join(map(chr, digest))).encode('UTF-8')).decode('ascii')
         urlSafeHash = urlSafeHash[0:-1]
 
     stream.seek(0)
