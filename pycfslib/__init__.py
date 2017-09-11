@@ -20,8 +20,10 @@ import struct
 import zlib
 import numpy as np
 from scipy.signal import firwin, lfilter, resample_poly
+from numba import jit
 
 
+@jit
 def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
     SRATE = 100 #Hz
     LOWPASS = 45.0 #Hz
