@@ -255,17 +255,18 @@ def read_stream(stream):
     return dataStream, header
 
 
-def read_header(stream):
+def read_header(cfs_file):
     # Read header:
     # 3 bytes signature, 1 byte version, 1 byte frequency, 1 byte time, 1 byte channel 2 bytes epochs
     # 1 byte compressionbit, 1 byte hashbit
+    stream = open(cfs_file, "rb")
     bytes = stream.read(11)
     header = struct.unpack('<3sBBBBh??', bytes)
 
-    if (header[0] != 'CFS'):
+    if (header[0].decode("ascii") != 'CFS'):
         raise RuntimeError("File is not a valid CFS file.")
 
-    if (header[1] != 1):
+    if (header[1] != 1 and header[1] != 2):
         raise RuntimeError("Invalid CFS version.")
 
     nfreq = header[2]
@@ -292,7 +293,6 @@ def read_header(stream):
 
 
 def read_cfs(cfs_file):
-
     stream = open(cfs_file, "rb")
     return read_stream(stream)
 
