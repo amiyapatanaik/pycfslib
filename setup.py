@@ -1,11 +1,11 @@
 from setuptools import setup
 
 setup(name='pycfslib',
-      version='0.1',
+      version='0.5',
       description='Library to read, write amd create CFS file and stream.',
-      url='http://github.com/amiyapatanaik/pycfslib',
+      url='https://github.com/neurobittechnologies/pycfslib',
       author='Amiya Patanaik',
-      author_email='amiya@duke-nus.edu.sg',
+      author_email='amiya@neurobit.io',
       license='GPL',
       packages=['pycfslib'],
       zip_safe=False)
