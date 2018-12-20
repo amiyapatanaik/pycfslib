@@ -209,10 +209,10 @@ def read_stream(stream):
     urlSafeHash = None
     digest = None
 
-    if (header[0].decode("ascii")  != 'CFS'):
+    if (header[0].decode("ascii") != 'CFS'):
         raise RuntimeError("File is not a valid CFS file.")
 
-    if (header[1] != 1):
+    if (header[1] != 1 and header[1] != 2):
         raise RuntimeError("Invalid CFS version.")
 
     nfreq = header[2]
