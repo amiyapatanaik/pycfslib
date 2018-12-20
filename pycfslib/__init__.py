@@ -1,7 +1,12 @@
 #!/usr/bin/python
+# Updated to support the new NEO prediction system
+# Z3Score will no longer support V1 CFS
+# New version now includes EMG channel, CFS version is now 2
+# additional vectorization applied for higher speeds
 # modified to be compatible with python 3
 # function to read, write and create CFS stream (byte array) from raw PSG data
-# Patents pending (c)-2016 Amiya Patanaik amiyain@gmail.com
+# (c)-2018 Neurobit Technologies Pte Ltd - Amiya Patanaik amiya@neurobit.io
+#
 # Licensed under GPL v3
 #
 # This program is free software: you can redistribute it and/or modify
@@ -19,12 +24,115 @@ import hashlib
 import struct
 import zlib
 import numpy as np
-from scipy.signal import firwin, lfilter, resample_poly
+from skimage.measure import block_reduce
+from scipy.signal import firwin, lfilter, resample_poly, stft
 from numba import jit
 
 
 @jit
+def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True):
+    SRATE = 100  # Hz
+    LOWPASS = 35.0  # Hz
+    HIGHPASS = 0.3  # Hz
+    LOWPASSEOG = 35.0  # Hz
+    LOWPASSEMG = 80.0  # Hz
+    channels = 5  # 2EEG 2EOG 1EMG
+
+    if (sampling_rates[0] < 100 or sampling_rates[1] < 100 or sampling_rates[2] < 200):
+        raise RuntimeError("Sampling rate too low.")
+
+    Fs_EEG = sampling_rates[0] / 2.0
+    Fs_EOG = sampling_rates[1] / 2.0
+    Fs_EMG = sampling_rates[2] / 2.0
+
+    one = np.array(1)
+
+    bEEG = firwin(51, [HIGHPASS / Fs_EEG, LOWPASS / Fs_EEG], pass_zero=False, window='hamming', scale=True)
+    bEOG = firwin(51, [HIGHPASS / Fs_EOG, LOWPASSEOG / Fs_EOG], pass_zero=False, window='hamming', scale=True)
+    bEMG = firwin(51, [HIGHPASS / Fs_EMG, LOWPASSEMG / Fs_EMG], pass_zero=False, window='hamming', scale=True)
+
+    eogL = lfilter(bEOG, one, EOGL)
+    eogR = lfilter(bEOG, one, EOGR)
+    eeg = (lfilter(bEEG, one, C3) + lfilter(bEEG, one, C4)) / 2.0
+    emg = lfilter(bEMG, one, EMG)
+
+    if sampling_rates[0] != 100:
+        P = 100
+        Q = sampling_rates[0]
+        eeg = resample_poly(eeg, P, Q)
+
+    if sampling_rates[1] != 100:
+        P = 100
+        Q = sampling_rates[1]
+        eogL = resample_poly(eogL, P, Q)
+        eogR = resample_poly(eogR, P, Q)
+
+    if sampling_rates[2] != 200:
+        P = 200
+        Q = sampling_rates[2]
+        emg = resample_poly(emg, P, Q)
+
+    totalEpochs = int(len(eogL) / 30.0 / SRATE)
+    data_length = 32 * 32 * (channels - 1) * totalEpochs
+    data = np.empty([data_length], dtype=np.float32)
+    window_eog = np.hamming(128)
+    window_eeg = np.hamming(128)
+    window_emg = np.hamming(256)
+    epochSize = 32 * 32 * (channels - 1)
+    data_frame = np.empty([32, 32, channels - 1])
+
+    # spectrogram computation
+    for i in range(totalEpochs):
+        frame1 = stft(eeg[i * 3000:(i + 1) * 3000], window=window_eeg, noverlap=36, boundary=None, nperseg=128,
+                      return_onesided=True, padded=False)
+        frame2 = stft(eogL[i * 3000:(i + 1) * 3000], window=window_eog, noverlap=36, boundary=None, nperseg=128,
+                      return_onesided=True, padded=False)
+        frame3 = stft(eogR[i * 3000:(i + 1) * 3000], window=window_eog, noverlap=36, boundary=None, nperseg=128,
+                      return_onesided=True, padded=False)
+        frame4 = stft(emg[i * 6000:(i + 1) * 6000], window=window_emg, noverlap=71, boundary=None, nperseg=256,
+                      return_onesided=True, padded=False)
+
+        data_frame[:, :, 0] = abs(frame1[2][1:33, 0:32]) * np.sum(window_eeg)  # EEG
+        data_frame[:, :, 1] = abs(frame2[2][1:33, 0:32]) * np.sum(window_eog)  # EOG-L
+        data_frame[:, :, 2] = abs(frame3[2][1:33, 0:32]) * np.sum(window_eog)  # EOG-R
+        data_frame[:, :, 3] = block_reduce(abs(frame4[2][1:129, :]) * np.sum(window_emg), (4, 1), np.mean)   # EMG
+
+        data[i * epochSize:(i + 1) * epochSize] = np.reshape(data_frame, epochSize, order='F')
+
+    signature = bytearray(
+        struct.pack('<3sBBBBh??', b'CFS', 2, 32, 32, (channels - 1), totalEpochs, compressionbit, hashbit))
+
+    data = data.tostring()
+
+    raw_digest = []
+    if hashbit:
+        shaHash = hashlib.sha1()
+        shaHash.update(data)
+        raw_digest = shaHash.digest()
+
+    if compressionbit:
+        data = zlib.compress(data)
+
+    if hashbit:
+        stream = signature + raw_digest + data
+    else:
+        stream = signature + data
+
+    return stream
+
+
+def save_stream_v2(file_name, C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True):
+    stream = create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=compressionbit, hashbit=hashbit)
+
+    with open(file_name, 'wb') as f:
+        f.write(stream)
+
+    return stream
+
+
+@jit
 def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
+    warnings.warn('WARNING: you are using version 1 of CFS, CFS version 1 is deprecated and no longer supported by Z3Score.')
     SRATE = 100 #Hz
     LOWPASS = 45.0 #Hz
     HIGHPASS = 0.3 #Hz
