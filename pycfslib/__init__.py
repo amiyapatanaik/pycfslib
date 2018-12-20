@@ -215,6 +215,7 @@ def read_stream(stream):
     if (header[1] != 1 and header[1] != 2):
         raise RuntimeError("Invalid CFS version.")
 
+    version = header[1]
     nfreq = header[2]
     ntime = header[3]
     nchannel = header[4]
@@ -249,7 +250,7 @@ def read_stream(stream):
     dataStream = np.asarray(rawStream, dtype='float32')
     dataStream = np.reshape(dataStream, (nfreq, ntime, nchannel, nepoch), order="F")
 
-    header = {'freq': nfreq, 'time': ntime, 'channel': nchannel,
+    header = {'freq': nfreq, 'time': ntime, 'channel': nchannel, 'version': version,
               'epoch': nepoch, 'compression': compressionbit, 'hash': hashbit, 'url': urlSafeHash}
 
     return dataStream, header
@@ -269,6 +270,7 @@ def read_header(cfs_file):
     if (header[1] != 1 and header[1] != 2):
         raise RuntimeError("Invalid CFS version.")
 
+    version = header[1]
     nfreq = header[2]
     ntime = header[3]
     nchannel = header[4]
@@ -287,7 +289,7 @@ def read_header(cfs_file):
 
     stream.seek(0)
 
-    header = {'freq': nfreq, 'time': ntime, 'channel': nchannel,
+    header = {'freq': nfreq, 'time': ntime, 'channel': nchannel, 'version': version,
               'epoch': nepoch, 'compression': compressionbit, 'hash': hashbit, 'url': urlSafeHash}
     return header
 
