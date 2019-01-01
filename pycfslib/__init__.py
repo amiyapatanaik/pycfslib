@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# Electrode fall off detection added
 # Updated to support the new NEO prediction system
 # Z3Score will no longer support V1 CFS
 # New version now includes EMG channel, CFS version is now 2
@@ -23,14 +24,16 @@ import base64
 import hashlib
 import struct
 import zlib
+import warnings
 import numpy as np
+from io import BytesIO
 from skimage.measure import block_reduce
 from scipy.signal import firwin, lfilter, resample_poly, stft
 from numba import jit
 
 
 @jit
-def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True):
+def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True, check_quality = True):
     SRATE = 100  # Hz
     LOWPASS = 35.0  # Hz
     HIGHPASS = 0.3  # Hz
@@ -80,6 +83,7 @@ def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=Tru
     window_emg = np.hamming(256)
     epochSize = 32 * 32 * (channels - 1)
     data_frame = np.empty([32, 32, channels - 1])
+    mean_power = np.empty([channels - 1, totalEpochs])
 
     # spectrogram computation
     for i in range(totalEpochs):
@@ -96,9 +100,16 @@ def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=Tru
         data_frame[:, :, 1] = abs(frame2[2][1:33, 0:32]) * np.sum(window_eog)  # EOG-L
         data_frame[:, :, 2] = abs(frame3[2][1:33, 0:32]) * np.sum(window_eog)  # EOG-R
         data_frame[:, :, 3] = block_reduce(abs(frame4[2][1:129, :]) * np.sum(window_emg), (4, 1), np.mean)   # EMG
+        mean_power[:, i] = np.mean(data_frame, (0, 1))
 
         data[i * epochSize:(i + 1) * epochSize] = np.reshape(data_frame, epochSize, order='F')
 
+    
+    quality = np.sum(mean_power > 800,1)*100/totalEpochs
+
+    if np.any(quality > 10) and check_quality:
+        print("Warning: Electrode Falloff detected, use qc_cfs function to check which channel is problematic")
+        
     signature = bytearray(
         struct.pack('<3sBBBBh??', b'CFS', 2, 32, 32, (channels - 1), totalEpochs, compressionbit, hashbit))
 
@@ -121,8 +132,8 @@ def create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=Tru
     return stream
 
 
-def save_stream_v2(file_name, C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True):
-    stream = create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=compressionbit, hashbit=hashbit)
+def save_stream_v2(file_name, C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=True, hashbit=True, check_quality=True):
+    stream = create_stream_v2(C3, C4, EOGL, EOGR, EMG, sampling_rates, compressionbit=compressionbit, hashbit=hashbit, check_quality=check_quality)
 
     with open(file_name, 'wb') as f:
         f.write(stream)
@@ -131,8 +142,8 @@ def save_stream_v2(file_name, C3, C4, EOGL, EOGR, EMG, sampling_rates, compressi
 
 
 @jit
-def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
-    warnings.warn('WARNING: you are using version 1 of CFS, CFS version 1 is deprecated and no longer supported by Z3Score.')
+def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True, check_quality=True):
+    warnings.warn('You are using version 1 of CFS, CFS version 1 is deprecated and will not be supported by Z3Score in the future.', RuntimeWarning)
     SRATE = 100 #Hz
     LOWPASS = 45.0 #Hz
     HIGHPASS = 0.3 #Hz
@@ -154,6 +165,7 @@ def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
 
     totalEpochs = int(len(eogL)/30.0/SRATE)
     data_length = 32*32*3*totalEpochs
+    mean_power = np.empty((3, totalEpochs))
     data = np.empty([data_length], dtype=np.float32)
     window = np.hamming(128)
     epochSize = 32 * 32 * 3
@@ -165,12 +177,18 @@ def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
             frame1 = abs(np.fft.fft(eeg[i * 3000 + j: i * 3000 + j + 128]*window))
             frame2 = abs(np.fft.fft(eogL[i * 3000 + j: i * 3000 + j + 128] * window))
             frame3 = abs(np.fft.fft(eogR[i * 3000 + j: i * 3000 + j + 128] * window))
+            mean_power[:, i] = [np.mean(frame1), np.mean(frame2), np.mean(frame3)]
             data[i*epochSize + tIDX * 32: i*epochSize + tIDX * 32 + 32] = frame1[0:32]
             data[i*epochSize + 32 * 32 + tIDX * 32: i*epochSize + 32 * 32 + tIDX * 32 + 32] = frame2[0:32]
             data[i*epochSize + 32 * 32 * 2 + tIDX * 32: i*epochSize + 32 * 32 * 2 + tIDX * 32 + 32] = frame3[0:32]
 
 
-    signature = bytearray(struct.pack('<3sBBBBh??', 'CFS',1,32,32,3,totalEpochs,compressionbit,hashbit))
+    quality = np.sum(mean_power > 800,1)*100/totalEpochs
+
+    if np.any(quality > 10) and check_quality:
+        print("Warning: Electrode Falloff detected, use qc_cfs function to check which channel is problematic")
+
+    signature = bytearray(struct.pack('<3sBBBBh??', b'CFS',1,32,32,3,totalEpochs,compressionbit,hashbit))
     data = data.tostring()
 
     raw_digest = []
@@ -190,9 +208,9 @@ def create_stream(EEG_data, sampling_rate, compressionbit=True, hashbit=True):
     return stream
 
 
-def save_stream(file_name, EEG_data, sampling_rate, compressionbit=True, hashbit=True):
+def save_stream(file_name, EEG_data, sampling_rate, compressionbit=True, hashbit=True, check_quality=True):
 
-    stream = create_stream(EEG_data, sampling_rate, compressionbit, hashbit)
+    stream = create_stream(EEG_data, sampling_rate, compressionbit, hashbit, check_quality)
 
     with open(file_name, 'wb') as f:
         f.write(stream)
@@ -200,7 +218,7 @@ def save_stream(file_name, EEG_data, sampling_rate, compressionbit=True, hashbit
     return stream
 
 
-def read_stream(stream):
+def read_stream(stream, check_quality = True):
     # Read header:
     # 3 bytes signature, 1 byte version, 1 byte frequency, 1 byte time, 1 byte channel 2 bytes epochs
     # 1 byte compressionbit, 1 byte hashbit
@@ -250,6 +268,11 @@ def read_stream(stream):
     dataStream = np.asarray(rawStream, dtype='float32')
     dataStream = np.reshape(dataStream, (nfreq, ntime, nchannel, nepoch), order="F")
 
+    quality = np.sum(np.mean(dataStream,(0,1)) > 800,1)*100/np.shape(dataStream)[-1]
+    if np.any(quality > 10) and check_quality:
+        print("Warning: Electrode Falloff detected, use qc_cfs function to check which channel is problematic")
+
+
     header = {'freq': nfreq, 'time': ntime, 'channel': nchannel, 'version': version,
               'epoch': nepoch, 'compression': compressionbit, 'hash': hashbit, 'url': urlSafeHash}
 
@@ -294,7 +317,55 @@ def read_header(cfs_file):
     return header
 
 
-def read_cfs(cfs_file):
+def read_cfs(cfs_file, check_quality = True):
     stream = open(cfs_file, "rb")
-    return read_stream(stream)
+    return read_stream(stream, check_quality)
 
+
+def qc_cfs(cfs_file, threshold = 10):
+    data, header = read_cfs(cfs_file, check_quality = False)
+    quality = np.sum(np.mean(data,(0,1)) > 800,1)*100/np.shape(data)[-1]
+    electrodes = {
+        0: "C3/C4",
+        1: "EOG-left",
+        2: "EOG-right",
+        3: "EMG"
+    }
+    status = False
+    qc = quality > threshold
+    idx = np.flatnonzero(qc)
+    failed_channels = " "
+    message = "All channels passed quality checks."
+    
+    if np.any(qc):
+        status = True
+        for i in idx:
+            failed_channels += electrodes[i]
+        message = "The following channel(s) failed quality checks:" + failed_channels
+
+    return status, quality, message
+
+
+def qc_stream(bytestream, threshold = 10):
+    file_stream = BytesIO(bytestream)
+    data, header = read_stream(file_stream, check_quality = False)
+    quality = np.sum(np.mean(data,(0,1)) > 800,1)*100/np.shape(data)[-1]
+    electrodes = {
+        0: "C3/C4",
+        1: "EOG-left",
+        2: "EOG-right",
+        3: "EMG"
+    }
+    status = False
+    qc = quality > threshold
+    idx = np.flatnonzero(qc)
+    failed_channels = " "
+    message = "All channels passed quality checks."
+
+    if np.any(qc):
+        status = True
+        for i in idx:
+            failed_channels += electrodes[i]
+        message = "The following channel(s) failed quality checks:" + failed_channels
+
+    return status, quality, message
